@@ -57,13 +57,14 @@ cargo build --release --locked
 
 Run `target/release/cogcalc.exe` on Windows, or `target/release/cogcalc` on Linux and macOS. If you have configured a shared Cargo target directory, the executable will be there instead; `cargo run --release --locked` works in either case. The first build downloads dependencies; the application itself works offline.
 
-To build a portable Windows folder and ZIP, run this in PowerShell:
+To build a portable Windows folder and ZIP with embedded dependency notices, first generate the matching source and notices from your committed checkout (Python 3.12 or newer is needed for this packaging step):
 
 ```powershell
-.\scripts\package.ps1
+python scripts/package-source.py --tag v0.2.0 --repository wishdom/CogCalc
+.\scripts\package.ps1 -LegalDirectory dist/legal
 ```
 
-The script creates a portable Windows folder and `dist/CogCalc-windows-x64.zip`, including documentation and license notices. Build artifacts are excluded from Git. Tagged releases build Windows, universal macOS, and Linux packages automatically through GitHub Actions.
+The script creates a portable Windows folder and `dist/CogCalc-windows-x64.zip`, including documentation and license notices. Release executables also embed those notices; use **Help → Save license notices** to save a copy. Build artifacts are excluded from Git. Tagged releases build Windows, universal macOS, and Linux packages automatically through GitHub Actions.
 
 ### Windows
 

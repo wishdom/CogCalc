@@ -3,6 +3,7 @@
 mod app;
 mod chart;
 mod drivetrain;
+mod legal;
 mod theme;
 
 fn main() -> eframe::Result {

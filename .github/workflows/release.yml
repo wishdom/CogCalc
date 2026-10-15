@@ -7,6 +7,10 @@ on:
     paths:
       - .github/workflows/release.yml
       - scripts/**
+      - Cargo.toml
+      - Cargo.lock
+      - build.rs
+      - src/**
   workflow_dispatch:
     inputs:
       tag:
@@ -92,6 +96,7 @@ jobs:
     timeout-minutes: 60
     env:
       RUSTFLAGS: -C target-feature=+crt-static
+      COGCALC_LEGAL_DIR: ${{ github.workspace }}/dist/legal
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -128,6 +133,7 @@ jobs:
     timeout-minutes: 90
     env:
       MACOSX_DEPLOYMENT_TARGET: "11.0"
+      COGCALC_LEGAL_DIR: ${{ github.workspace }}/dist/legal
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -164,6 +170,8 @@ jobs:
     needs: source
     runs-on: ubuntu-22.04
     timeout-minutes: 60
+    env:
+      COGCALC_LEGAL_DIR: ${{ github.workspace }}/dist/legal
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:

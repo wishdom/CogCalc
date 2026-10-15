@@ -1101,6 +1101,7 @@ impl GearApp {
     }
 
     fn about(&mut self, ctx: &egui::Context) {
+        let mut save_notices = false;
         egui::Window::new("Help & definitions").open(&mut self.show_about).resizable(true)
             .collapsible(false).default_width(540.0).show(ctx, |ui| {
                 egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
@@ -1131,8 +1132,27 @@ impl GearApp {
                     ui.label("Ctrl/Cmd+C copies all gears when you are not editing text. Ctrl/Cmd+S exports CSV. Tab moves between controls.");
                     theme::muted(ui, format!("CogCalc {} · GPL-3.0 · No warranty. You may modify and redistribute under the included license.", env!("CARGO_PKG_VERSION")));
                     egui::CollapsingHeader::new("License").show(ui, |ui| { ui.label(include_str!("../LICENSE")); });
+                    if !crate::legal::NOTICES.is_empty() {
+                        ui.label("This app includes open-source libraries and fonts. Save their license notices and the matching source information as a text file.");
+                        save_notices = ui.button("Save license notices…").clicked();
+                    }
                 });
             });
+        if save_notices
+            && let Some(path) = rfd::FileDialog::new()
+                .set_title("Save license notices")
+                .set_file_name("CogCalc-license-notices.txt")
+                .add_filter("Text document", &["txt"])
+                .save_file()
+        {
+            match std::fs::write(&path, crate::legal::combined_notices()) {
+                Ok(()) => self.notify(
+                    format!("Saved license notices to {}", path.display()),
+                    false,
+                ),
+                Err(error) => self.notify(format!("Could not save license notices: {error}"), true),
+            }
+        }
     }
 }
 

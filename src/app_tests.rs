@@ -351,7 +351,7 @@ fn preset_unit_and_cadence_controls_update_the_live_workspace() {
 fn comparison_and_preferences_survive_a_storage_roundtrip() {
     let (ctx, mut app) = new_app();
     let size = egui::vec2(1220.0, 1280.0);
-    click(&ctx, &mut app, size, "Compare setups");
+    click(&ctx, &mut app, size, "Compare");
     assert_eq!(app.tab, ResultsTab::Compare);
     click(&ctx, &mut app, size, "Use current as reference");
     assert!(app.saved.baseline.is_some());
@@ -372,7 +372,7 @@ fn comparison_and_preferences_survive_a_storage_roundtrip() {
     assert_eq!(restored.saved.settings.cadence, 100.0);
     assert!(restored.saved.settings.imperial);
     assert_eq!(restored.tab, ResultsTab::Gears);
-    let output = click(&restored_ctx, &mut restored, size, "Compare setups");
+    let output = click(&restored_ctx, &mut restored, size, "Compare");
     text_rect(&output, "Reference compared with current setup");
     assert!(
         restored
@@ -531,7 +531,7 @@ fn named_setups_save_load_update_and_reload_without_mutating_other_snapshots() {
     assert_eq!(app.saved.settings.cadence, 100.0);
     assert!(app.saved.named_setups[1].settings == gravel);
 
-    click(&ctx, &mut app, size, "Compare setups");
+    click(&ctx, &mut app, size, "Compare");
     click(&ctx, &mut app, size, "Use current as reference");
     toggle_theme(&ctx, &mut app, size);
     click(&ctx, &mut app, size, "Reset setup");
@@ -830,11 +830,11 @@ fn legacy_saved_state_keeps_drivetrain_and_defaults_to_light_mode() {
 fn all_result_tabs_render_in_both_themes_at_minimum_size_without_taglines() {
     for dark_mode in [false, true] {
         for (label, expected_tab) in [
-            ("Gear table", ResultsTab::Gears),
-            ("Cadence table", ResultsTab::Cadence),
-            ("Speed chart", ResultsTab::Chart),
+            ("Gears", ResultsTab::Gears),
+            ("Cadence", ResultsTab::Cadence),
+            ("Chart", ResultsTab::Chart),
             ("Drivetrain", ResultsTab::Drivetrain),
-            ("Compare setups", ResultsTab::Compare),
+            ("Compare", ResultsTab::Compare),
         ] {
             let (ctx, mut app) = new_app();
             if dark_mode {
@@ -948,18 +948,16 @@ fn selection_survives_display_changes_and_reconciles_removed_gears() {
 }
 
 #[test]
-fn gear_inspector_dropdowns_change_selection_without_changing_the_drivetrain() {
+fn gear_buttons_change_selection_in_one_click_without_changing_the_bike() {
     let (ctx, mut app) = new_app();
     assert_eq!(app.selected, Some((34, 32)));
     let chainrings = app.saved.settings.chainrings.clone();
     let sprockets = app.saved.settings.sprockets.clone();
 
-    click(&ctx, &mut app, DESKTOP, "34 teeth");
-    click(&ctx, &mut app, DESKTOP, "50 teeth");
+    click(&ctx, &mut app, DESKTOP, "50");
     assert_eq!(app.selected, Some((50, 32)));
 
-    click(&ctx, &mut app, DESKTOP, "32 teeth");
-    let output = click(&ctx, &mut app, DESKTOP, "11 teeth");
+    let output = click(&ctx, &mut app, DESKTOP, "11");
     assert_eq!(app.selected, Some((50, 11)));
     assert_eq!(app.rows.len(), 22);
     assert_eq!(app.saved.settings.chainrings, chainrings);
@@ -969,6 +967,21 @@ fn gear_inspector_dropdowns_change_selection_without_changing_the_drivetrain() {
         &output,
         "Ratio 4.55: one pedal turn rotates the rear wheel 4.55 times.",
     );
+}
+
+#[test]
+fn easier_and_harder_controls_step_through_gears_at_minimum_window_size() {
+    let size = egui::vec2(820.0, 600.0);
+    let (ctx, mut app) = new_app();
+    let easiest = app.selected;
+    click(&ctx, &mut app, size, "Harder");
+    assert_eq!(app.selected, Some((34, 28)));
+    click(&ctx, &mut app, size, "Easier");
+    assert_eq!(app.selected, easiest);
+    click(&ctx, &mut app, size, "Easier");
+    assert_eq!(app.selected, easiest, "The easiest gear must not underflow");
+    assert_eq!(app.saved.settings.chainrings, "50, 34");
+    assert_eq!(app.saved.settings.sprockets, CASSETTES[0].1);
 }
 
 #[test]
@@ -1003,6 +1016,51 @@ fn copy_table_button_emits_complete_current_data_to_the_clipboard() {
 }
 
 #[test]
+fn compact_gear_strip_reveals_the_selected_cog_without_an_animation_delay() {
+    let size = egui::vec2(820.0, 600.0);
+    let (ctx, mut app) = new_app();
+    app.saved.settings.sprockets = "9-60".into();
+    app.refresh();
+    for rear in [60, 11, 28] {
+        app.selected = Some((34, rear));
+        render(&ctx, &mut app, DESKTOP, Vec::new());
+        render(&ctx, &mut app, size, Vec::new());
+        let output = render(&ctx, &mut app, size, Vec::new());
+        let rect = text_rect(&output, &rear.to_string());
+        assert!(egui::Rect::from_min_size(egui::Pos2::ZERO, size).contains_rect(rect));
+    }
+}
+
+#[test]
+fn normal_cassette_buttons_wrap_whole_numbers_inside_a_compact_window() {
+    let size = egui::vec2(820.0, 600.0);
+    let (ctx, mut app) = new_app();
+    render(&ctx, &mut app, size, Vec::new());
+    let output = render(&ctx, &mut app, size, Vec::new());
+    for teeth in &app.setup.as_ref().unwrap().sprockets {
+        let rect = text_rect(&output, &teeth.to_string());
+        assert!(
+            rect.right() <= size.x - 18.0,
+            "Cog {teeth} overflowed: {rect:?}"
+        );
+    }
+}
+
+#[test]
+fn easier_and_harder_skip_equivalent_ratios() {
+    let (ctx, mut app) = new_app();
+    app.saved.settings.chainrings = "40,20".into();
+    app.saved.settings.sprockets = "10,20".into();
+    app.refresh();
+    app.selected = Some((20, 10));
+    click(&ctx, &mut app, DESKTOP, "Harder");
+    assert_eq!(app.selected, Some((40, 10)));
+    click(&ctx, &mut app, DESKTOP, "Easier");
+    click(&ctx, &mut app, DESKTOP, "Easier");
+    assert_eq!(app.selected, Some((20, 20)));
+}
+
+#[test]
 fn single_and_dense_extreme_setups_produce_valid_chart_geometry() {
     for (chainrings, sprockets, circumference) in
         [("1", "200", "100"), ("198,199,200", "1-64", "10000")]
@@ -1016,7 +1074,7 @@ fn single_and_dense_extreme_setups_produce_valid_chart_geometry() {
             cadence: 150.0,
             ..Settings::default()
         };
-        click(&ctx, &mut app, DESKTOP, "Speed chart");
+        click(&ctx, &mut app, DESKTOP, "Chart");
         assert_eq!(app.tab, ResultsTab::Chart);
         let output = render(&ctx, &mut app, DESKTOP, Vec::new());
         assert!(app.error.is_none());
@@ -1033,10 +1091,10 @@ fn chart_points_and_table_rows_select_the_inspected_gear() {
     app.saved.settings.sprockets = "11, 22, 44".into();
     render(&ctx, &mut app, size, Vec::new());
     app.selected = Some((40, 11));
-    click(&ctx, &mut app, size, "Speed chart");
+    click(&ctx, &mut app, size, "Chart");
     assert_eq!(app.selected, Some((40, 11)));
     let output = render(&ctx, &mut app, size, Vec::new());
-    let chart_title = text_rect(&output, "Speed chart");
+    let chart_title = text_rect(&output, "Chart");
     let axis_label = text_rect(&output, "Rear gear size (teeth)");
 
     fn collect_markers(shape: &egui::Shape, markers: &mut Vec<egui::Pos2>) {
@@ -1065,7 +1123,7 @@ fn chart_points_and_table_rows_select_the_inspected_gear() {
     click_position(&ctx, &mut app, size, pos);
     assert_eq!(app.selected, Some((40, 44)));
 
-    click(&ctx, &mut app, size, "Gear table");
+    click(&ctx, &mut app, size, "Gears");
     assert_eq!(app.tab, ResultsTab::Gears);
     click(&ctx, &mut app, size, "40 / 22");
     assert_eq!(app.selected, Some((40, 22)));

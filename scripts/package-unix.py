@@ -64,7 +64,7 @@ def main():
                     "NSHighResolutionCapable": True,
                 }, info)
             subprocess.run(["plutil", "-lint", str(app / "Contents" / "Info.plist")], check=True)
-            subprocess.run(["lipo", "-verify_arch", "arm64", "x86_64", str(executable)], check=True)
+            subprocess.run(["lipo", str(executable), "-verify_arch", "arm64", "x86_64"], check=True)
             # An ad hoc signature supports local execution but is not Developer ID signing or notarization.
             subprocess.run(["codesign", "--force", "--sign", "-", "--timestamp=none", str(app)], check=True)
             subprocess.run(["codesign", "--verify", "--deep", "--strict", "--verbose=2", str(app)], check=True)

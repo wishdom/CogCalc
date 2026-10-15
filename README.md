@@ -75,10 +75,10 @@ On Ubuntu or Debian, install the native build dependencies:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libx11-dev libxi-dev libgl1-mesa-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 ```
 
-Running the app requires a graphical Wayland or X11 session and working OpenGL drivers. File dialogs use the XDG Desktop Portal backend: install the portal service and the backend appropriate to your desktop. The dialog library uses `libdbus`, with `zenity` as a fallback. GTK development headers are not required by this project's configuration. See the [eframe Linux notes](https://github.com/emilk/egui/tree/main/crates/eframe#readme) and [rfd backend documentation](https://docs.rs/rfd/0.17.2/rfd/#linux--bsd-backends).
+Running the app requires a graphical Wayland or X11 session and working OpenGL drivers. For prebuilt downloads on Ubuntu/Debian, install `libxkbcommon-x11-0` if an X11 keyboard-library error prevents startup: `sudo apt-get install libxkbcommon-x11-0`. File dialogs use the XDG Desktop Portal backend: install the portal service and the backend appropriate to your desktop. The dialog library uses `libdbus`, with `zenity` as a fallback. GTK development headers are not required by this project's configuration. See the [eframe Linux notes](https://github.com/emilk/egui/tree/main/crates/eframe#readme) and [rfd backend documentation](https://docs.rs/rfd/0.17.2/rfd/#linux--bsd-backends).
 
 ### macOS
 

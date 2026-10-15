@@ -128,7 +128,7 @@ fn valid_setup_name(name: &str) -> Result<(), String> {
     }
 }
 
-#[derive(Default, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, Debug)]
 enum ResultsTab {
     #[default]
     Gears,
@@ -138,9 +138,100 @@ enum ResultsTab {
     Compare,
 }
 
+fn choice_button(
+    ui: &mut egui::Ui,
+    label: impl Into<String>,
+    selected: bool,
+    width: f32,
+) -> egui::Response {
+    let p = theme::palette(ui);
+    ui.add(
+        Button::new(RichText::new(label.into()).color(if selected {
+            p.accent_text
+        } else {
+            p.text
+        }))
+        .fill(if selected { p.accent } else { p.surface })
+        .selected(selected)
+        .wrap_mode(egui::TextWrapMode::Extend)
+        .min_size(egui::vec2(width, 34.0)),
+    )
+}
+
+fn gear_choices(ui: &mut egui::Ui, label: &'static str, teeth: &[u16], selected: &mut u16) {
+    let button_width = if teeth.iter().any(|teeth| *teeth >= 100) {
+        52.0
+    } else {
+        44.0
+    };
+    let remembered = ui.make_persistent_id(("gear_choice_visible", label));
+    let key = (
+        *selected,
+        ui.available_width().round() as u32,
+        teeth.to_vec(),
+    );
+    let reveal = ui
+        .ctx()
+        .data(|data| data.get_temp::<(u16, u32, Vec<u16>)>(remembered))
+        .as_ref()
+        != Some(&key);
+    ui.horizontal_top(|ui| {
+        ui.add_sized(
+            [44.0, 34.0],
+            egui::Label::new(RichText::new(label).strong()),
+        );
+        let mut choices = |ui: &mut egui::Ui, row: &[u16]| {
+            for &tooth in row {
+                let response = ui
+                    .push_id((label, tooth), |ui| {
+                        choice_button(ui, tooth.to_string(), tooth == *selected, button_width)
+                    })
+                    .inner
+                    .on_hover_text(format!("{label} gear: {tooth} teeth"));
+                if teeth.len() > 16 && reveal && tooth == *selected {
+                    response.scroll_to_me(Some(Align::Center));
+                }
+                if response.clicked() {
+                    *selected = tooth;
+                }
+                response.widget_info(|| {
+                    egui::WidgetInfo::selected(
+                        egui::WidgetType::Button,
+                        ui.is_enabled(),
+                        tooth == *selected,
+                        format!("{label} gear: {tooth} teeth"),
+                    )
+                });
+            }
+        };
+        if teeth.len() <= 16 {
+            let gap = ui.spacing().item_spacing.x;
+            let columns = ((ui.available_width() + gap) / (button_width + gap))
+                .floor()
+                .max(1.0) as usize;
+            ui.vertical(|ui| {
+                for row in teeth.chunks(columns) {
+                    ui.horizontal(|ui| choices(ui, row));
+                }
+            });
+        } else {
+            egui::ScrollArea::horizontal()
+                .id_salt(("gear_choices", label))
+                .animated(false)
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| choices(ui, teeth));
+                });
+        }
+    });
+    ui.ctx()
+        .data_mut(|data| data.insert_temp(remembered, (*selected, key.1, key.2)));
+}
+
 pub struct GearApp {
     saved: SavedState,
     rows: Vec<GearRow>,
+    setup: Option<GearSetup>,
     error: Option<String>,
     fingerprint: String,
     selected: Option<(u16, u16)>,
@@ -189,6 +280,7 @@ impl GearApp {
         let mut app = Self {
             saved,
             rows: Vec::new(),
+            setup: None,
             error: None,
             fingerprint: String::new(),
             selected: None,
@@ -242,11 +334,13 @@ impl GearApp {
                         .min_by(|a, b| a.ratio.total_cmp(&b.ratio))
                         .map(|r| (r.front_teeth, r.rear_teeth));
                 }
+                self.setup = Some(setup);
             }
             Err(error) => {
                 self.error = Some(error);
                 self.rows.clear();
                 self.selected = None;
+                self.setup = None;
             }
         }
     }
@@ -438,7 +532,7 @@ impl GearApp {
         ui.horizontal(|ui| {
             if ui
                 .add_enabled(
-                    self.saved.settings.setup().is_ok(),
+                    self.error.is_none(),
                     Button::new(if has_active {
                         "Save as…"
                     } else {
@@ -458,10 +552,7 @@ impl GearApp {
             }
             if has_active {
                 if ui
-                    .add_enabled(
-                        edited && self.saved.settings.setup().is_ok(),
-                        Button::new("Update"),
-                    )
+                    .add_enabled(edited && self.error.is_none(), Button::new("Update"))
                     .on_hover_text("Replace the loaded saved setup with your current inputs")
                     .clicked()
                     && let Err(error) = self.update_named_setup()
@@ -572,30 +663,33 @@ impl GearApp {
 
     fn sidebar(&mut self, ui: &mut egui::Ui) {
         let p = theme::palette(ui);
-        egui::Panel::left("setup").exact_size(300.0).resizable(false)
+        egui::Panel::left("setup").exact_size(280.0).resizable(false)
             .frame(egui::Frame::new().fill(p.surface).inner_margin(18))
             .show(ui, |ui| {
                 egui::ScrollArea::vertical().id_salt("setup_scroll").show(ui, |ui| {
                     ui.heading("1. Bike setup");
                     self.saved_setups(ui);
                     ui.separator();
-                    theme::muted(ui, "Start with an example, then match your bike's parts. Results update automatically.");
+                    theme::muted(ui, "Start with your kind of bike.");
                     ui.horizontal(|ui| {
                         for (index, name) in ["Road", "Gravel", "MTB"].iter().enumerate() {
-                            if ui.button(*name).clicked() { self.apply_preset(index); }
+                            let matches = match index {
+                                0 => self.saved.settings.chainrings == "50, 34" && self.saved.settings.sprockets == CASSETTES[0].1,
+                                1 => self.saved.settings.chainrings == "40" && self.saved.settings.sprockets == CASSETTES[2].1,
+                                _ => self.saved.settings.chainrings == "32" && self.saved.settings.sprockets == CASSETTES[3].1,
+                            };
+                            if choice_button(ui, *name, matches, 72.0).clicked() { self.apply_preset(index); }
                         }
                     });
                     ui.add_space(8.0);
                     ui.separator();
                     ui.strong("Front gears (chainrings)");
-                    theme::muted(ui, "Teeth on each gear beside the pedals.");
                     let response = ui.add(egui::TextEdit::singleline(&mut self.saved.settings.chainrings)
                         .hint_text("50, 34").desired_width(f32::INFINITY).margin(egui::vec2(8.0, 7.0)));
                     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Chainring teeth"));
-                    theme::muted(ui, "Example: 50, 34 for two front gears.");
+                    theme::muted(ui, "Tooth counts, separated by commas.");
                     ui.add_space(8.0);
                     ui.strong("Rear gears (cassette)");
-                    theme::muted(ui, "Teeth on each gear at the rear wheel.");
                     let current = CASSETTES.iter().find(|(_, teeth)| *teeth == self.saved.settings.sprockets)
                         .map(|(name, _)| *name).unwrap_or("Custom cassette");
                     egui::ComboBox::from_id_salt("cassette_preset").selected_text(current).width(ui.available_width())
@@ -608,7 +702,7 @@ impl GearApp {
                         .desired_rows(2).desired_width(f32::INFINITY).margin(egui::vec2(8.0, 7.0))
                         .hint_text("11, 13, 15, 17, 19, 21"));
                     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, "Cassette teeth"));
-                    theme::muted(ui, "Edit the list, or use 9-60 for every size from 9 to 60 teeth.");
+                    theme::muted(ui, "Edit individual cogs, or enter a range: 9-60.");
                     ui.add_space(8.0);
                     ui.strong("Wheel & tire size");
                     theme::muted(ui, "Choose the size printed on your tire.");
@@ -669,9 +763,24 @@ impl GearApp {
         let p = theme::palette(ui);
         egui::CentralPanel::default().frame(egui::Frame::new().fill(p.background).inner_margin(18))
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().id_salt("workspace_scroll").auto_shrink([false, false])
+                ui.heading("2. Gear results");
+                // Keep navigation visible while scrolling through a long table or diagram.
+                ui.horizontal_wrapped(|ui| {
+                    for (tab, label) in [
+                        (ResultsTab::Gears, "Gears"),
+                        (ResultsTab::Cadence, "Cadence"),
+                        (ResultsTab::Chart, "Chart"),
+                        (ResultsTab::Drivetrain, "Drivetrain"),
+                        (ResultsTab::Compare, "Compare"),
+                    ] {
+                        if choice_button(ui, label, self.tab == tab, 0.0).clicked() {
+                            self.tab = tab;
+                        }
+                    }
+                });
+                ui.add_space(8.0);
+                egui::ScrollArea::vertical().id_salt(("workspace_scroll", self.tab)).auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.heading("2. Gear results");
                         self.riding_controls(ui);
                         if self.rows.is_empty() {
                             theme::card(ui).show(ui, |ui| {
@@ -683,15 +792,7 @@ impl GearApp {
                             return;
                         }
                         self.selected_gear(ui);
-                        ui.add_space(4.0);
-                        ui.horizontal_wrapped(|ui| {
-                            ui.selectable_value(&mut self.tab, ResultsTab::Gears, "Gear table");
-                            ui.selectable_value(&mut self.tab, ResultsTab::Cadence, "Cadence table");
-                            ui.selectable_value(&mut self.tab, ResultsTab::Chart, "Speed chart");
-                            ui.selectable_value(&mut self.tab, ResultsTab::Drivetrain, "Drivetrain");
-                            ui.selectable_value(&mut self.tab, ResultsTab::Compare, "Compare setups");
-                        });
-                        ui.separator();
+                        ui.add_space(12.0);
                         match self.tab {
                             ResultsTab::Gears | ResultsTab::Cadence => self.results_table(ui),
                             ResultsTab::Chart => {
@@ -712,8 +813,8 @@ impl GearApp {
                                         });
                                     });
                                     theme::muted(ui, "Select a cog to inspect that gear combination. Labels show tooth counts.");
-                                    if let Ok(setup) = self.saved.settings.setup() {
-                                        self.drivetrain.show(ui, &setup, &mut self.selected);
+                                    if let Some(setup) = &self.setup {
+                                        self.drivetrain.show(ui, setup, &mut self.selected);
                                     }
                                     if export {
                                         self.export_drivetrain();
@@ -736,14 +837,7 @@ impl GearApp {
                 self.unit_controls(ui);
             });
         }
-        theme::muted(
-            ui,
-            format!(
-                "{:.0} rpm means {:.0} complete pedal turns per minute. Change this to calculate speed.",
-                self.saved.settings.cadence, self.saved.settings.cadence
-            ),
-        );
-        ui.add_space(4.0);
+        ui.add_space(8.0);
     }
 
     fn cadence_control(&mut self, ui: &mut egui::Ui) {
@@ -774,47 +868,38 @@ impl GearApp {
         };
         let p = theme::palette(ui);
         let unit = self.saved.settings.unit();
-        let setup = self
-            .saved
-            .settings
-            .setup()
-            .expect("Only displayed for valid input");
+        let setup = self.setup.clone().expect("Only displayed for valid input");
         theme::card(ui).show(ui, |ui| {
             ui.set_min_width(ui.available_width());
-            let narrow = ui.available_width() < 600.0;
-            if narrow { ui.strong("Inspect a gear"); }
             ui.horizontal(|ui| {
-                if !narrow {
-                    ui.strong("Inspect a gear");
-                    ui.add_space(6.0);
-                }
-                ui.label("Front:");
-                egui::ComboBox::from_id_salt("inspect_front").width(85.0).selected_text(format!("{front} teeth"))
-                    .show_ui(ui, |ui| {
-                        for teeth in &setup.chainrings {
-                            ui.selectable_value(&mut front, *teeth, format!("{teeth} teeth"));
-                        }
-                    });
-                ui.label("Rear:");
-                egui::ComboBox::from_id_salt("inspect_rear").width(85.0).selected_text(format!("{rear} teeth"))
-                    .show_ui(ui, |ui| {
-                        for teeth in &setup.sprockets {
-                            ui.selectable_value(&mut rear, *teeth, format!("{teeth} teeth"));
-                        }
-                    });
+                ui.strong("Inspect a gear");
+                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    let ratio = f64::from(front) / f64::from(rear);
+                    let harder = self.rows.iter().find(|row| row.ratio > ratio);
+                    let easier = self.rows.iter().rfind(|row| row.ratio < ratio);
+                    if ui.add_enabled(harder.is_some(), Button::new("Harder")).on_hover_text("Next higher gear ratio").clicked() {
+                        let next = harder.unwrap();
+                        (front, rear) = (next.front_teeth, next.rear_teeth);
+                    }
+                    if ui.add_enabled(easier.is_some(), Button::new("Easier")).on_hover_text("Next lower gear ratio").clicked() {
+                        let next = easier.unwrap();
+                        (front, rear) = (next.front_teeth, next.rear_teeth);
+                    }
+                });
             });
+            ui.add_space(3.0);
+            gear_choices(ui, "Front", &setup.chainrings, &mut front);
+            gear_choices(ui, "Rear", &setup.sprockets, &mut rear);
             self.selected = Some((front, rear));
             let row = self.rows.iter().find(|r| r.front_teeth == front && r.rear_teeth == rear).copied().unwrap();
             let compact = self.tab == ResultsTab::Drivetrain;
-            if !compact {
-                theme::muted(ui, "A smaller front gear or a larger rear gear makes pedaling easier on the same bike.");
-            }
+            ui.add_space(6.0);
             ui.columns(2, |columns| {
                 columns[0].label(format!("Speed at {:.0} rpm", self.saved.settings.cadence));
                 columns[0].label(RichText::new(format!("{:.1} {}", unit.from_kmh(row.speed_kmh(self.saved.settings.cadence)), unit.label()))
-                    .size(26.0).strong().color(p.accent));
+                    .size(30.0).strong().color(p.accent));
                 columns[1].label("Distance per pedal turn");
-                columns[1].label(RichText::new(format!("{:.2} m", row.development_m)).size(26.0).strong());
+                columns[1].label(RichText::new(format!("{:.2} m", row.development_m)).size(30.0).strong());
             });
             if compact { return; }
             ui.label(format!("Ratio {:.2}: one pedal turn rotates the rear wheel {:.2} times.", row.ratio, row.ratio));
@@ -1016,12 +1101,13 @@ impl GearApp {
     }
 
     fn about(&mut self, ctx: &egui::Context) {
+        let mut save_notices = false;
         egui::Window::new("Help & definitions").open(&mut self.show_about).resizable(true)
             .collapsible(false).default_width(540.0).show(ctx, |ui| {
                 egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
                     ui.heading("Using the calculator");
                     ui.label("1. Choose a bike example or enter your front gears, rear gears, and tire size.");
-                    ui.label("2. Set your pedaling rate. Inspect a gear by choosing its front and rear tooth counts or selecting a table row.");
+                    ui.label("2. Set your pedaling rate. Click Front and Rear tooth-count buttons to choose a gear, or use Easier / Harder to step through the ratios. Table rows are also selectable.");
                     ui.label("3. Use the tabs for all gear combinations, cadence at fixed speeds, a speed chart, the drivetrain diagram, or setup comparison.");
                     ui.label("4. Choose Save setup to give your bike a name. Load it later from Saved setups. Edits stay in your current inputs until you choose Update; Save as creates a separate setup.");
                     ui.label("The moon/sun button beside Help changes the theme. In Drivetrain, select a cog to inspect it, or export the diagram as SVG.");
@@ -1046,8 +1132,27 @@ impl GearApp {
                     ui.label("Ctrl/Cmd+C copies all gears when you are not editing text. Ctrl/Cmd+S exports CSV. Tab moves between controls.");
                     theme::muted(ui, format!("CogCalc {} · GPL-3.0 · No warranty. You may modify and redistribute under the included license.", env!("CARGO_PKG_VERSION")));
                     egui::CollapsingHeader::new("License").show(ui, |ui| { ui.label(include_str!("../LICENSE")); });
+                    if !crate::legal::NOTICES.is_empty() {
+                        ui.label("This app includes open-source libraries and fonts. Save their license notices and the matching source information as a text file.");
+                        save_notices = ui.button("Save license notices…").clicked();
+                    }
                 });
             });
+        if save_notices
+            && let Some(path) = rfd::FileDialog::new()
+                .set_title("Save license notices")
+                .set_file_name("CogCalc-license-notices.txt")
+                .add_filter("Text document", &["txt"])
+                .save_file()
+        {
+            match std::fs::write(&path, crate::legal::combined_notices()) {
+                Ok(()) => self.notify(
+                    format!("Saved license notices to {}", path.display()),
+                    false,
+                ),
+                Err(error) => self.notify(format!("Could not save license notices: {error}"), true),
+            }
+        }
     }
 }
 

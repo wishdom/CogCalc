@@ -1,8 +1,22 @@
 # CogCalc
 
-A native bicycle gear calculator, rewritten from the original Python **Simple Bicycle Gear Ratio Calculator**. CogCalc is the working name for this Rust edition.
+A free, open-source bicycle gear calculator for Windows, macOS, and Linux.
 
 Enter your bike's gearing and tire size to calculate speed, pedaling rate, and distance per pedal turn. The application is written entirely in Rust, with an egui/eframe desktop interface and OpenGL rendering. It runs locally without a Python runtime, browser, or webview.
+
+## Download
+
+**No account, installer, or Rust toolchain needed.** Choose your platform:
+
+| Platform | Latest download | Open the app |
+| --- | --- | --- |
+| **Windows · 64-bit** | **[Download CogCalc.exe](https://github.com/wishdom/CogCalc/releases/latest/download/CogCalc.exe)** | Open the downloaded executable. |
+| **macOS · Apple Silicon & Intel** | **[Download for macOS](https://github.com/wishdom/CogCalc/releases/latest/download/CogCalc-macos-universal.zip)** | Unzip, drag CogCalc.app to Applications, then open it. |
+| **Linux · x86-64** | **[Download for Linux](https://github.com/wishdom/CogCalc/releases/latest/download/CogCalc-linux-x64.tar.gz)** | Extract the archive and run `CogCalc/CogCalc`. |
+
+Also available: [Windows ZIP with documentation and licenses](https://github.com/wishdom/CogCalc/releases/latest/download/CogCalc-windows-x64.zip), [release notes](https://github.com/wishdom/CogCalc/releases/latest), [checksums](https://github.com/wishdom/CogCalc/releases/latest/download/SHA256SUMS.txt), and [matching source with dependencies](https://github.com/wishdom/CogCalc/releases/latest/download/CogCalc-source.tar.gz).
+
+The Windows executable is not publisher-signed, and the macOS app is not Apple-notarized, so the first launch may require confirmation. On macOS, follow [Apple's instructions for opening an app you trust](https://support.apple.com/en-us/102445). Linux builds target Ubuntu 22.04 or newer and compatible distributions, with a graphical desktop and OpenGL; see the [Linux notes](#linux) if a system library is missing.
 
 ![CogCalc in light mode, showing bike setup, an inspected gear, and the gear table](docs/preview.png)
 
@@ -16,8 +30,8 @@ Enter your bike's gearing and tire size to calculate speed, pedaling rate, and d
 - Enter rear sprockets as a list (`11, 13, 15, 17`) or an inclusive range (`9-60`, as in the original calculator).
 - Choose a wheel and tire preset or enter a measured circumference in millimeters.
 - Set your pedaling rate from 30–150 rpm and display speed in km/h or mph.
-- Inspect one gear with the front/rear dropdowns, a table row, or a chart point. See its speed, distance per pedal turn, and an explanation of its ratio.
-- Switch between **Gear table**, **Cadence table**, **Speed chart**, **Drivetrain**, and **Compare setups**. The gear table is the default view, ordered from easiest to hardest gearing.
+- Pick front and rear gears with one click, or use **Easier / Harder** to step through the gearing. Table rows, chart points, and cogs in the drivetrain are also selectable.
+- Switch between **Gears**, **Cadence**, **Chart**, **Drivetrain**, and **Compare**. The gear table is the default view, ordered from easiest to hardest gearing.
 - Review the cadence needed at the original 5, 10, 20, 30, and 40 km/h reference speeds.
 - Open **Technical details** for gear inches and overall range, or enable **Show gear inches** in the gear table.
 - Save multiple named bike setups, including their gears, wheel size, cadence, and speed units; load, update, or delete them from **Saved setups**.
@@ -43,13 +57,14 @@ cargo build --release --locked
 
 Run `target/release/cogcalc.exe` on Windows, or `target/release/cogcalc` on Linux and macOS. If you have configured a shared Cargo target directory, the executable will be there instead; `cargo run --release --locked` works in either case. The first build downloads dependencies; the application itself works offline.
 
-To build a portable Windows folder and ZIP, run this in PowerShell:
+To build a portable Windows folder and ZIP with embedded dependency notices, first generate the matching source and notices from your committed checkout (Python 3.12 or newer is needed for this packaging step):
 
 ```powershell
-.\scripts\package.ps1
+python scripts/package-source.py --tag v0.2.0 --repository wishdom/CogCalc
+.\scripts\package.ps1 -LegalDirectory dist/legal
 ```
 
-The script creates `dist/CogCalc/CogCalc.exe` and `dist/CogCalc-windows.zip`, including the README, license, and available preview images. Build artifacts are excluded from Git.
+The script creates a portable Windows folder and `dist/CogCalc-windows-x64.zip`, including documentation and license notices. Release executables also embed those notices; use **Help → Save license notices** to save a copy. Build artifacts are excluded from Git. Tagged releases build Windows, universal macOS, and Linux packages automatically through GitHub Actions.
 
 ### Windows
 
@@ -61,10 +76,10 @@ On Ubuntu or Debian, install the native build dependencies:
 
 ```sh
 sudo apt-get update
-sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libx11-dev libxi-dev libgl1-mesa-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
+sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libx11-dev libxi-dev libgl1-mesa-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 ```
 
-Running the app requires a graphical Wayland or X11 session and working OpenGL drivers. File dialogs use the XDG Desktop Portal backend: install the portal service and the backend appropriate to your desktop. The dialog library uses `libdbus`, with `zenity` as a fallback. GTK development headers are not required by this project's configuration. See the [eframe Linux notes](https://github.com/emilk/egui/tree/main/crates/eframe#readme) and [rfd backend documentation](https://docs.rs/rfd/0.17.2/rfd/#linux--bsd-backends).
+Running the app requires a graphical Wayland or X11 session and working OpenGL drivers. For prebuilt downloads on Ubuntu/Debian, install `libxkbcommon-x11-0` if an X11 keyboard-library error prevents startup: `sudo apt-get install libxkbcommon-x11-0`. File dialogs use the XDG Desktop Portal backend: install the portal service and the backend appropriate to your desktop. The dialog library uses `libdbus`, with `zenity` as a fallback. GTK development headers are not required by this project's configuration. See the [eframe Linux notes](https://github.com/emilk/egui/tree/main/crates/eframe#readme) and [rfd backend documentation](https://docs.rs/rfd/0.17.2/rfd/#linux--bsd-backends).
 
 ### macOS
 
@@ -81,14 +96,14 @@ The CI workflow defines build-time checks for Windows, Linux, and macOS. These c
 1. Under **Bike setup**, choose a Road, Gravel, or MTB example, then match the front and rear tooth counts to your bike. Front gears are the chainrings beside the pedals; rear gears form the cassette at the rear wheel. Commas, spaces, and semicolons separate values; duplicate tooth counts are removed.
 2. Choose the size printed on your tire, or select **Measured circumference** and enter the distance rolled in one full wheel turn, in millimeters.
 3. Set **Pedaling rate (cadence)** and choose km/h or mph. For example, 90 rpm means 90 complete pedal turns per minute.
-4. Under **Inspect a gear**, choose its front and rear tooth counts. These dropdowns select one combination from your setup. The results show its speed at the selected cadence and distance traveled per complete pedal turn. Selecting a table row or chart point updates the same inspection.
+4. Under **Inspect a gear**, click a **Front** and **Rear** tooth-count button. Use **Easier / Harder** to move through gear ratios without opening a menu. Long rows of cogs scroll horizontally and keep the selected cog in view. The results show speed and distance per pedal turn. Selecting a table row, chart point, or cog in the drivetrain updates the same inspection.
 5. Use the tabs to view all combinations, required cadence at fixed speeds, the speed chart, a drivetrain diagram, or setup comparisons.
 
 Under **Saved setups**, choose **Save setup…** and enter a name. The picker loads that bike's gears, wheel size, cadence, and units. After editing a loaded bike, choose **Update** to replace its saved values or **Save as…** to create another entry. **Delete** asks for confirmation and removes the saved entry while keeping the current inputs.
 
-In **Compare setups**, choose **Use current as reference**, then edit the bike or load a saved setup. **Replace reference** uses the current inputs as the new reference; **Clear reference** removes it. Both setups use the current cadence, and comparison percentages account for wheel size. This reference is separate from the named setup library.
+In **Compare**, choose **Use current as reference**, then edit the bike or load a saved setup. **Replace reference** uses the current inputs as the new reference; **Clear reference** removes it. Both setups use the current cadence, and comparison percentages account for wheel size. This reference is separate from the named setup library.
 
-**Drivetrain** draws each gear with exactly its entered number of teeth and shows the selected pair and chain as a schematic. Gear sizes are normalized for readability. Click a gear to update the inspected combination. **Export SVG** saves the complete vector diagram in the current theme for viewing or editing outside CogCalc.
+**Drivetrain** draws each gear with exactly its entered number of teeth and shows the selected pair and chain as a schematic. Gear sizes are normalized for readability. Click a gear to update the inspected combination. The live view uses native vector drawing and reuses its geometry when selection changes; **Export SVG** generates the complete vector file on demand in the current theme.
 
 **Technical details** starts collapsed and contains gear inches, overall range, and the **Copy gear** button. The gear table keeps gear inches hidden until you enable **Show gear inches**. Use **Help** for definitions and formulas. The moon button switches to dark mode; the sun switches back to light mode. Both support keyboard focus and activation.
 
@@ -133,6 +148,8 @@ The current inputs are an automatically saved draft. Editing them does not overw
 **Reset setup** restores the road example, default cadence, and km/h units. Named setups, the comparison reference, theme, and gear-inches preference remain saved. To back up these settings and the setup library, copy `app.ron` after closing CogCalc. Removing that file resets all saved application and window state.
 
 ## Development
+
+The warm ivory, ink, teal, and persimmon themes are an original interpretation inspired by Sanzo Wada's [A Dictionary of Color Combinations](https://en.seigensha.com/books/978-4-86152-247-5/). Text and selection colors are checked for contrast in both light and dark modes.
 
 The calculation, validation, and table export code lives in `src/gearing.rs`; the desktop interface is in `src/app.rs`, with chart drawing in `src/chart.rs`, the SVG drivetrain view in `src/drivetrain.rs`, and styling in `src/theme.rs`. The interface uses eframe 0.36.2 with the `glow` renderer; native file dialogs use rfd 0.17.2.
 

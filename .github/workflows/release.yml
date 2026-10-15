@@ -1,0 +1,277 @@
+name: Release downloads
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/**
+      - Cargo.toml
+      - Cargo.lock
+      - build.rs
+      - src/**
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing version tag to build and release (for example v0.2.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.pull_request.number || inputs.tag || github.ref_name }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  source:
+    name: Validate version and package source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      sha: ${{ steps.version.outputs.sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.sha || format('refs/tags/{0}', inputs.tag || github.ref_name) }}
+          persist-credentials: false
+      - name: Install Python for source packaging
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Validate release version
+        id: version
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os, re, subprocess, tomllib
+          tag = os.environ["RELEASE_TAG"]
+          with open("Cargo.toml", "rb") as manifest:
+              version = tomllib.load(manifest)["package"]["version"]
+          if os.environ["EVENT_NAME"] == "pull_request":
+              tag = f"v{version}"
+          if not re.fullmatch(r"v\d+\.\d+\.\d+", tag) or tag != f"v{version}":
+              raise SystemExit("Release tag must be a stable vMAJOR.MINOR.PATCH matching Cargo.toml")
+          sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"tag={tag}\nsha={sha}\n")
+          PY
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.95.0
+      - name: Package corresponding source and license notices
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: python3 scripts/package-source.py --tag "$RELEASE_TAG" --repository "$GITHUB_REPOSITORY"
+      - name: Save source archive
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-source
+          path: dist/CogCalc-source.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+      - name: Save license notices
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-legal
+          path: dist/legal/*
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows x64
+    needs: source
+    runs-on: windows-2022
+    timeout-minutes: 60
+    env:
+      RUSTFLAGS: -C target-feature=+crt-static
+      COGCALC_LEGAL_DIR: ${{ github.workspace }}/dist/legal
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.95.0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-legal
+          path: dist/legal
+      - name: Test
+        if: github.event_name != 'pull_request'
+        run: cargo test --locked
+      - name: Build and package portable application
+        shell: pwsh
+        run: ./scripts/package.ps1 -LegalDirectory dist/legal
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-windows
+          path: |
+            dist/CogCalc.exe
+            dist/CogCalc-windows-x64.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  macos:
+    name: macOS universal
+    needs: source
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      COGCALC_LEGAL_DIR: ${{ github.workspace }}/dist/legal
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.95.0
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-legal
+          path: dist/legal
+      - name: Test native architecture
+        if: github.event_name != 'pull_request'
+        run: cargo test --locked
+      - name: Build both Mac architectures
+        run: |
+          cargo build --release --locked --target aarch64-apple-darwin
+          cargo build --release --locked --target x86_64-apple-darwin
+      - name: Package and verify application bundle
+        run: python3 scripts/package-unix.py macos --legal-directory dist/legal
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-macos
+          path: dist/CogCalc-macos-universal.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  linux:
+    name: Linux x64
+    needs: source
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    env:
+      COGCALC_LEGAL_DIR: ${{ github.workspace }}/dist/legal
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ needs.source.outputs.sha }}
+          persist-credentials: false
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f # master
+        with:
+          toolchain: 1.95.0
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libwayland-dev libxkbcommon-dev libxkbcommon-x11-0 libx11-dev libxi-dev libgl1-mesa-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev xvfb xauth
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: release-legal
+          path: dist/legal
+      - name: Test
+        if: github.event_name != 'pull_request'
+        run: cargo test --locked
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package portable application
+        run: python3 scripts/package-unix.py linux --legal-directory dist/legal
+      - name: Smoke test packaged application in a virtual display
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/cogcalc-smoke"
+          tar -xzf dist/CogCalc-linux-x64.tar.gz -C "$RUNNER_TEMP/cogcalc-smoke"
+          set +e
+          timeout 15s xvfb-run -a "$RUNNER_TEMP/cogcalc-smoke/CogCalc/CogCalc"
+          status=$?
+          set -e
+          if [ "$status" -ne 124 ]; then
+            echo "Expected the GUI to remain open until the smoke-test timeout; exit status: $status"
+            exit 1
+          fi
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-linux
+          path: dist/CogCalc-linux-x64.tar.gz
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 7
+
+  publish:
+    name: Publish complete release
+    if: github.event_name != 'pull_request'
+    needs: [source, windows, macos, linux]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+      - name: Verify asset set and calculate checksums
+        working-directory: release
+        shell: bash
+        run: |
+          for asset in CogCalc.exe CogCalc-windows-x64.zip CogCalc-macos-universal.zip CogCalc-linux-x64.tar.gz CogCalc-source.tar.gz LICENSE README.md SOURCE.txt THIRD-PARTY-NOTICES.txt; do
+            test -s "$asset"
+          done
+          sha256sum CogCalc.exe CogCalc-windows-x64.zip CogCalc-macos-universal.zip CogCalc-linux-x64.tar.gz CogCalc-source.tar.gz LICENSE README.md SOURCE.txt THIRD-PARTY-NOTICES.txt > SHA256SUMS.txt
+      - name: Publish release with all downloads
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ needs.source.outputs.tag }}
+          RELEASE_SHA: ${{ needs.source.outputs.sha }}
+        shell: bash
+        run: |
+          tag_sha=$(gh api "repos/$GH_REPO/commits/$RELEASE_TAG" --jq .sha)
+          if [ "$tag_sha" != "$RELEASE_SHA" ]; then
+            echo "Release tag changed during the build; refusing to publish."
+            exit 1
+          fi
+          cat > release-notes.md <<EOF
+          Download the build for your computer; Rust is not needed to run it.
+
+          - Windows x64: download CogCalc.exe, or extract CogCalc-windows-x64.zip and run CogCalc.exe.
+          - macOS 11 or later: extract CogCalc-macos-universal.zip and move CogCalc.app to Applications. Includes Apple Silicon and Intel code.
+          - Linux x64: extract CogCalc-linux-x64.tar.gz and run CogCalc/CogCalc. Built on Ubuntu 22.04; a desktop session and compatible system libraries are required.
+
+          Windows is not code signed. macOS uses an ad hoc signature and is not Developer ID signed or notarized. Operating systems may require approval before opening these downloads.
+
+          CogCalc is free software under GPL-3.0-only. CogCalc-source.tar.gz contains matching source, build scripts, and vendored dependency source and licenses. SHA256SUMS.txt contains download checksums.
+
+          Source commit: $RELEASE_SHA
+          EOF
+          if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > existing-release.txt 2>/dev/null; then
+            if [ "$(cat existing-release.txt)" != true ]; then
+              echo "A published release already exists; refusing to replace its assets."
+              exit 1
+            fi
+          else
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "CogCalc $RELEASE_TAG" --notes-file release-notes.md
+          fi
+          gh release upload "$RELEASE_TAG" release/* --clobber
+          gh release edit "$RELEASE_TAG" --draft=false --latest --notes-file release-notes.md

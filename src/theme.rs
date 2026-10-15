@@ -24,40 +24,42 @@ pub fn palette(ui: &egui::Ui) -> Palette {
 }
 
 fn palette_for(dark: bool) -> Palette {
+    // An original palette inspired by the balance of paper, ink, and earthy
+    // accents in Sanzo Wada's color studies, adapted for screen contrast.
     if dark {
         Palette {
-            background: Color32::from_rgb(24, 30, 35),
-            surface: Color32::from_rgb(35, 43, 49),
-            text: Color32::from_rgb(231, 236, 239),
-            muted: Color32::from_rgb(165, 177, 183),
-            accent: Color32::from_rgb(105, 203, 177),
-            selection: Color32::from_rgb(32, 62, 55),
-            border: Color32::from_rgb(57, 68, 75),
-            error: Color32::from_rgb(255, 170, 160),
-            error_background: Color32::from_rgb(72, 45, 44),
-            accent_text: Color32::from_rgb(16, 36, 30),
+            background: Color32::from_rgb(28, 45, 52),
+            surface: Color32::from_rgb(39, 59, 66),
+            text: Color32::from_rgb(244, 235, 221),
+            muted: Color32::from_rgb(180, 191, 185),
+            accent: Color32::from_rgb(168, 208, 194),
+            selection: Color32::from_rgb(51, 77, 82),
+            border: Color32::from_rgb(74, 95, 99),
+            error: Color32::from_rgb(243, 160, 135),
+            error_background: Color32::from_rgb(80, 59, 57),
+            accent_text: Color32::from_rgb(24, 52, 59),
             chart_colors: [
-                Color32::from_rgb(105, 203, 177),
-                Color32::from_rgb(238, 183, 121),
-                Color32::from_rgb(137, 180, 239),
+                Color32::from_rgb(168, 208, 194),
+                Color32::from_rgb(239, 171, 130),
+                Color32::from_rgb(218, 192, 130),
             ],
         }
     } else {
         Palette {
-            background: Color32::from_rgb(243, 245, 246),
-            surface: Color32::WHITE,
-            text: Color32::from_rgb(30, 43, 50),
-            muted: Color32::from_rgb(91, 107, 116),
-            accent: Color32::from_rgb(18, 111, 92),
-            selection: Color32::from_rgb(225, 240, 235),
-            border: Color32::from_rgb(212, 220, 224),
-            error: Color32::from_rgb(178, 63, 51),
-            error_background: Color32::from_rgb(255, 240, 237),
-            accent_text: Color32::WHITE,
+            background: Color32::from_rgb(244, 239, 228),
+            surface: Color32::from_rgb(255, 252, 244),
+            text: Color32::from_rgb(36, 61, 68),
+            muted: Color32::from_rgb(85, 103, 106),
+            accent: Color32::from_rgb(32, 92, 99),
+            selection: Color32::from_rgb(224, 233, 223),
+            border: Color32::from_rgb(215, 210, 198),
+            error: Color32::from_rgb(170, 68, 51),
+            error_background: Color32::from_rgb(250, 232, 221),
+            accent_text: Color32::from_rgb(255, 252, 244),
             chart_colors: [
-                Color32::from_rgb(18, 111, 92),
-                Color32::from_rgb(169, 96, 43),
-                Color32::from_rgb(66, 111, 165),
+                Color32::from_rgb(32, 92, 99),
+                Color32::from_rgb(169, 70, 47),
+                Color32::from_rgb(135, 96, 30),
             ],
         }
     }
@@ -78,18 +80,18 @@ fn style_for(dark: bool) -> egui::Style {
     let colors = palette_for(dark);
     let mut style = egui::Style {
         text_styles: [
-            (TextStyle::Heading, FontId::proportional(21.0)),
-            (TextStyle::Body, FontId::proportional(14.0)),
-            (TextStyle::Button, FontId::proportional(14.0)),
-            (TextStyle::Small, FontId::proportional(12.0)),
+            (TextStyle::Heading, FontId::proportional(23.0)),
+            (TextStyle::Body, FontId::proportional(15.0)),
+            (TextStyle::Button, FontId::proportional(15.0)),
+            (TextStyle::Small, FontId::proportional(13.0)),
             (TextStyle::Monospace, FontId::monospace(13.0)),
         ]
         .into(),
         ..Default::default()
     };
-    style.spacing.item_spacing = Vec2::new(8.0, 6.0);
-    style.spacing.button_padding = Vec2::new(10.0, 6.0);
-    style.spacing.interact_size.y = 30.0;
+    style.spacing.item_spacing = Vec2::new(9.0, 7.0);
+    style.spacing.button_padding = Vec2::new(12.0, 7.0);
+    style.spacing.interact_size.y = 32.0;
     style.spacing.slider_width = 164.0;
     style.visuals = if dark {
         egui::Visuals::dark()
@@ -103,13 +105,13 @@ fn style_for(dark: bool) -> egui::Style {
     visuals.panel_fill = colors.background;
     visuals.window_fill = colors.surface;
     visuals.window_stroke = Stroke::new(1.0, colors.border);
-    visuals.window_corner_radius = CornerRadius::same(6);
-    visuals.menu_corner_radius = CornerRadius::same(6);
+    visuals.window_corner_radius = CornerRadius::same(10);
+    visuals.menu_corner_radius = CornerRadius::same(8);
     visuals.extreme_bg_color = colors.background;
     visuals.text_edit_bg_color = Some(colors.background);
     visuals.faint_bg_color = colors.background;
     visuals.code_bg_color = colors.background;
-    visuals.warn_fg_color = colors.chart_colors[1];
+    visuals.warn_fg_color = colors.chart_colors[2];
     visuals.error_fg_color = colors.error;
     visuals.selection.bg_fill = colors.selection;
     visuals.selection.stroke = Stroke::new(1.0, colors.accent);
@@ -137,9 +139,12 @@ fn style_for(dark: bool) -> egui::Style {
         widget.weak_bg_fill = fill;
         widget.bg_stroke = Stroke::new(1.0, border);
         widget.fg_stroke = Stroke::new(1.0, colors.text);
-        widget.corner_radius = CornerRadius::same(5);
+        widget.corner_radius = CornerRadius::same(7);
         widget.expansion = 0.0;
     }
+    visuals.widgets.hovered.bg_stroke.width = 1.5;
+    visuals.widgets.active.bg_stroke.width = 1.5;
+    visuals.widgets.open.bg_stroke.width = 1.5;
     style
 }
 
@@ -148,14 +153,14 @@ pub fn card(ui: &egui::Ui) -> egui::Frame {
     egui::Frame::new()
         .fill(colors.surface)
         .stroke(Stroke::new(1.0, colors.border))
-        .corner_radius(6)
-        .inner_margin(14)
+        .corner_radius(10)
+        .inner_margin(16)
 }
 
 pub fn muted(ui: &mut egui::Ui, text: impl Into<String>) {
     ui.label(
         egui::RichText::new(text.into())
-            .size(12.0)
+            .size(13.0)
             .color(palette(ui).muted),
     );
 }
@@ -183,7 +188,7 @@ pub fn theme_toggle(ui: &mut egui::Ui, dark: &mut bool) -> egui::Response {
         let painter = ui.painter();
         painter.rect(
             rect,
-            5,
+            7,
             visuals.weak_bg_fill,
             visuals.bg_stroke,
             egui::StrokeKind::Inside,
@@ -227,7 +232,7 @@ pub fn brand(ui: &mut egui::Ui) {
     let colors = palette(ui);
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(32.0), egui::Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, 6, colors.accent);
+    p.rect_filled(rect, 8, colors.accent);
     let radius = 11.5;
     for tooth in 0..COG_TEETH {
         p.add(egui::Shape::convex_polygon(
@@ -246,7 +251,8 @@ pub fn window_icon() -> egui::IconData {
     let center = egui::pos2(32.0, 32.0);
     let radius: f32 = 23.0;
     let teeth = std::array::from_fn::<_, COG_TEETH, _>(|index| cog_tooth(center, radius, index));
-    let background = Color32::from_rgb(18, 111, 92).to_array();
+    let colors = palette_for(false);
+    let background = colors.accent.to_array();
     let mut rgba = Vec::with_capacity(size * size * 4);
     for y in 0..size {
         for x in 0..size {
@@ -268,7 +274,7 @@ pub fn window_icon() -> egui::IconData {
                         && (distance_sq <= (radius * 0.78).powi(2)
                             || teeth.iter().any(|tooth| point_in_tooth(point, tooth)));
                     let color = if on_cog {
-                        [255, 255, 255, 255]
+                        colors.accent_text.to_array()
                     } else {
                         background
                     };
@@ -300,4 +306,49 @@ fn point_in_tooth(point: egui::Pos2, tooth: &[egui::Pos2; 4]) -> bool {
         let relative = point - tooth[index];
         edge.x * relative.y - edge.y * relative.x >= 0.0
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn luminance(color: Color32) -> f64 {
+        let linear = [color.r(), color.g(), color.b()].map(|channel| {
+            let value = f64::from(channel) / 255.0;
+            if value <= 0.04045 {
+                value / 12.92
+            } else {
+                ((value + 0.055) / 1.055).powf(2.4)
+            }
+        });
+        linear[0] * 0.2126 + linear[1] * 0.7152 + linear[2] * 0.0722
+    }
+
+    fn assert_readable(foreground: Color32, background: Color32) {
+        let foreground_luminance = luminance(foreground);
+        let background_luminance = luminance(background);
+        let ratio = (foreground_luminance.max(background_luminance) + 0.05)
+            / (foreground_luminance.min(background_luminance) + 0.05);
+        assert!(
+            ratio >= 4.5,
+            "Text {foreground:?} on {background:?} has only {ratio:.2}:1 contrast"
+        );
+    }
+
+    #[test]
+    fn both_palettes_keep_labels_readable_on_normal_and_selected_surfaces() {
+        for dark in [false, true] {
+            let colors = palette_for(dark);
+            for background in [colors.background, colors.surface, colors.selection] {
+                for foreground in [colors.text, colors.muted, colors.accent]
+                    .into_iter()
+                    .chain(colors.chart_colors)
+                {
+                    assert_readable(foreground, background);
+                }
+            }
+            assert_readable(colors.accent_text, colors.accent);
+            assert_readable(colors.error, colors.error_background);
+        }
+    }
 }

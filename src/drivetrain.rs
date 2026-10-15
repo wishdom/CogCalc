@@ -1,35 +1,23 @@
-//! A generated SVG drivetrain schematic. Each outline has the requested number
-//! of teeth; dimensions are normalized for legibility, not manufacturing.
+//! A vector drivetrain schematic with an on-demand standalone SVG export.
+//! Each outline has the requested number of teeth; dimensions are normalized
+//! for legibility, not manufacturing.
 
+use std::cell::OnceCell;
+use std::collections::BTreeMap;
 use std::f64::consts::{FRAC_PI_2, TAU};
 use std::fmt::Write;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use cogcalc::GearSetup;
-use eframe::egui::{self, Color32, Pos2, Rect, Sense};
+use eframe::egui::{self, Align2, Color32, FontId, Pos2, Rect, Sense, Shape, Stroke};
 
 use crate::theme::{self, Palette};
 
-static NEXT_VIEW: AtomicU64 = AtomicU64::new(0);
-
-/// Owns only the current SVG and its hit targets. The stable image URI is
-/// invalidated whenever the setup, selected gear, layout, or palette changes.
+/// Geometry depends only on the gear inventory and available width. Selection
+/// and theme changes repaint vectors without generating or rasterizing an SVG.
+#[derive(Default)]
 pub struct DrivetrainView {
-    uri: String,
-    cached: Option<CachedSvg>,
-}
-
-impl Default for DrivetrainView {
-    fn default() -> Self {
-        Self {
-            uri: format!(
-                "bytes://cogcalc-drivetrain-{}.svg",
-                NEXT_VIEW.fetch_add(1, Ordering::Relaxed)
-            ),
-            cached: None,
-        }
-    }
+    cached: Option<CachedView>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -41,17 +29,24 @@ struct ViewKey {
     palette: Palette,
 }
 
-struct CachedSvg {
+struct CachedView {
     key: ViewKey,
-    drawing: SvgDrawing,
-    bytes: Arc<[u8]>,
+    layout: Arc<DrawingLayout>,
+    svg: OnceCell<String>,
 }
 
-struct SvgDrawing {
-    svg: String,
+struct DrawingLayout {
     width: f32,
     height: f32,
+    inventories: Vec<InventoryLayout>,
+    outlines: BTreeMap<u16, Vec<Pos2>>,
+}
+
+struct InventoryLayout {
+    origin: Pos2,
+    title: String,
     targets: Vec<GearTarget>,
+    bottom: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -81,15 +76,20 @@ struct GearTarget {
     rect: Rect,
     kind: GearKind,
     teeth: u16,
+    center: Pos2,
+    radius: f32,
 }
 
 impl DrivetrainView {
-    /// The current complete SVG, suitable for saving as a standalone file.
-    /// Available after the first call to `show` with a valid setup.
+    /// Generate the current standalone SVG only when it is requested for export.
+    /// The result reflects clicks from the most recent `show` in the same frame.
     pub fn svg(&self) -> Option<&str> {
-        self.cached
-            .as_ref()
-            .map(|cached| cached.drawing.svg.as_str())
+        self.cached.as_ref().map(|cached| {
+            cached
+                .svg
+                .get_or_init(|| export_svg(&cached.key, &cached.layout))
+                .as_str()
+        })
     }
 
     pub fn show(
@@ -104,9 +104,7 @@ impl DrivetrainView {
             setup.sprockets.clone(),
             setup.circumference_mm,
         ) else {
-            if self.cached.take().is_some() {
-                ui.ctx().forget_image(&self.uri);
-            }
+            self.cached = None;
             ui.label("Enter a valid bike setup to display its gears.");
             return;
         };
@@ -133,36 +131,42 @@ impl DrivetrainView {
             width,
             palette: theme::palette(ui),
         };
-        self.prepare(ui.ctx(), key);
-        egui_extras::install_image_loaders(ui.ctx());
+        self.prepare(key);
 
-        let cached = self.cached.as_ref().unwrap();
-        let scale = display_width / cached.drawing.width;
-        let size = egui::vec2(display_width, cached.drawing.height * scale);
-        let response = ui.add(
-            egui::Image::from_bytes(self.uri.clone(), cached.bytes.clone())
-                .fit_to_exact_size(size)
-                .sense(Sense::click())
-                .alt_text(format!(
-                    "Bicycle drivetrain with {} front chainrings and {} rear sprockets. Selected: {} front teeth and {} rear teeth.",
-                    cached.key.fronts.len(), cached.key.rears.len(), pair.0, pair.1
-                )),
-        );
-
-        let target = response.hover_pos().and_then(|pointer| {
-            let local = Pos2::new(
-                (pointer.x - response.rect.left()) / scale,
-                (pointer.y - response.rect.top()) / scale,
+        let layout = Arc::clone(&self.cached.as_ref().unwrap().layout);
+        let scale = display_width / layout.width;
+        let size = egui::vec2(display_width, layout.height * scale);
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let transform = egui::emath::TSTransform::new(rect.min.to_vec2(), scale);
+        let mut pair = pair;
+        let mut hovered = None;
+        for target in layout.inventories.iter().flat_map(|list| &list.targets) {
+            let hit_rect = transform * target.rect;
+            let response = ui.interact(
+                hit_rect,
+                ui.id().with(("drivetrain", target.kind.id(), target.teeth)),
+                Sense::click(),
             );
-            cached
-                .drawing
-                .targets
-                .iter()
-                .find(|target| target.rect.contains(local))
-                .copied()
-        });
-        if let Some(target) = target {
-            let clicked = response.clicked();
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::SelectableLabel,
+                    ui.is_enabled(),
+                    match target.kind {
+                        GearKind::Front => target.teeth == pair.0,
+                        GearKind::Rear => target.teeth == pair.1,
+                    },
+                    format!("{}: {} teeth", target.kind.label(), target.teeth),
+                )
+            });
+            if response.clicked() {
+                match target.kind {
+                    GearKind::Front => pair.0 = target.teeth,
+                    GearKind::Rear => pair.1 = target.teeth,
+                }
+            }
+            if response.hovered() || response.has_focus() {
+                hovered = Some((target.kind, target.teeth));
+            }
             response
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .on_hover_text(format!(
@@ -170,39 +174,400 @@ impl DrivetrainView {
                     target.kind.label(),
                     target.teeth
                 ));
-            if clicked {
-                let pair = match target.kind {
-                    GearKind::Front => (target.teeth, pair.1),
-                    GearKind::Rear => (pair.0, target.teeth),
-                };
-                *selected = Some(pair);
-                // Keep exported SVG in sync immediately, even before repaint.
-                let mut key = self.cached.as_ref().unwrap().key.clone();
-                key.selected = pair;
-                self.prepare(ui.ctx(), key);
-                ui.ctx().request_repaint();
-            }
         }
+        *selected = Some(pair);
+        let cached = self.cached.as_mut().unwrap();
+        if cached.key.selected != pair {
+            cached.key.selected = pair;
+            cached.svg.take();
+        }
+        // Resolve interactions before painting so the highlight and selected
+        // pair change immediately, with no extra frame or texture upload.
+        paint_drivetrain(ui, rect, scale, cached, hovered);
     }
 
-    fn prepare(&mut self, ctx: &egui::Context, key: ViewKey) {
-        if self.cached.as_ref().is_some_and(|cached| cached.key == key) {
-            return;
+    fn prepare(&mut self, key: ViewKey) {
+        if let Some(cached) = &mut self.cached {
+            if cached.key == key {
+                return;
+            }
+            if cached.key.fronts == key.fronts
+                && cached.key.rears == key.rears
+                && cached.key.width == key.width
+            {
+                cached.key = key;
+                cached.svg.take();
+                return;
+            }
         }
-        ctx.forget_image(&self.uri);
-        let drawing = build_svg(&key);
-        let bytes = Arc::from(drawing.svg.as_bytes());
-        self.cached = Some(CachedSvg {
+        let layout = Arc::new(DrawingLayout::new(&key));
+        self.cached = Some(CachedView {
             key,
-            drawing,
-            bytes,
+            layout,
+            svg: OnceCell::new(),
         });
     }
 }
 
+impl DrawingLayout {
+    fn new(key: &ViewKey) -> Self {
+        let width = key.width as f32;
+        let inventory_top = 224.0;
+        let (fronts, rears) = if width >= 700.0 {
+            let front_width = 230.0;
+            let front_x = width - front_width;
+            (
+                InventoryLayout::new(
+                    Pos2::new(front_x, inventory_top),
+                    front_width,
+                    &key.fronts,
+                    GearKind::Front,
+                ),
+                InventoryLayout::new(
+                    Pos2::new(0.0, inventory_top),
+                    front_x - 12.0,
+                    &key.rears,
+                    GearKind::Rear,
+                ),
+            )
+        } else {
+            let fronts = InventoryLayout::new(
+                Pos2::new(0.0, inventory_top),
+                width,
+                &key.fronts,
+                GearKind::Front,
+            );
+            let rears = InventoryLayout::new(
+                Pos2::new(0.0, fronts.bottom + 16.0),
+                width,
+                &key.rears,
+                GearKind::Rear,
+            );
+            (fronts, rears)
+        };
+        let height = fronts.bottom.max(rears.bottom) + 12.0;
+        // Unit-radius outlines can be reused for both inventories and the
+        // enlarged selected pair, including after selection or theme changes.
+        let outlines = key
+            .fronts
+            .iter()
+            .chain(&key.rears)
+            .copied()
+            .map(|teeth| (teeth, cog_outline(teeth)))
+            .collect();
+        Self {
+            width,
+            height,
+            inventories: vec![fronts, rears],
+            outlines,
+        }
+    }
+}
+
+impl InventoryLayout {
+    fn new(origin: Pos2, width: f32, teeth: &[u16], kind: GearKind) -> Self {
+        let title = match kind {
+            GearKind::Front => format!("Front chainrings ({})", teeth.len()),
+            GearKind::Rear => format!("Rear sprockets ({})", teeth.len()),
+        };
+        let columns = (((width - 24.0) / 96.0) as usize)
+            .clamp(1, 8)
+            .min(teeth.len());
+        let gap = 8.0;
+        let cell_width = ((width - 32.0 - gap * (columns - 1) as f32) / columns as f32).min(160.0);
+        let cell_height = 108.0;
+        let start_x =
+            origin.x + (width - (cell_width * columns as f32 + gap * (columns - 1) as f32)) / 2.0;
+        let max_teeth = f32::from(*teeth.iter().max().unwrap());
+        let targets = teeth
+            .iter()
+            .copied()
+            .enumerate()
+            .map(|(index, count)| {
+                let x = start_x + (index % columns) as f32 * (cell_width + gap);
+                let y = origin.y + 34.0 + (index / columns) as f32 * (cell_height + gap);
+                GearTarget {
+                    rect: Rect::from_min_size(Pos2::new(x, y), egui::vec2(cell_width, cell_height)),
+                    kind,
+                    teeth: count,
+                    center: Pos2::new(x + cell_width / 2.0, y + 43.0),
+                    radius: 19.0 + 17.0 * (f32::from(count) / max_teeth).sqrt(),
+                }
+            })
+            .collect();
+        Self {
+            origin,
+            title,
+            targets,
+            bottom: origin.y + 34.0 + teeth.len().div_ceil(columns) as f32 * (cell_height + gap),
+        }
+    }
+}
+
+struct VectorPainter<'a> {
+    painter: egui::Painter,
+    transform: egui::emath::TSTransform,
+    palette: Palette,
+    outlines: &'a BTreeMap<u16, Vec<Pos2>>,
+}
+
+impl VectorPainter<'_> {
+    fn text(&self, x: f32, y: f32, size: u16, text: &str, center: bool, color: Color32) {
+        self.painter.text(
+            self.transform * Pos2::new(x, y + 2.0),
+            if center {
+                Align2::CENTER_BOTTOM
+            } else {
+                Align2::LEFT_BOTTOM
+            },
+            text,
+            FontId::proportional(f32::from(size) * self.transform.scaling),
+            color,
+        );
+    }
+
+    fn cog(&self, center: Pos2, radius: f32, teeth: u16, selected: bool) {
+        let fill = if selected {
+            self.palette.selection
+        } else {
+            self.palette.background
+        };
+        let stroke_color = if selected {
+            self.palette.accent
+        } else {
+            self.palette.muted
+        };
+        let center = self.transform * center;
+        let radius = radius * self.transform.scaling;
+        let points: Vec<_> = self.outlines[&teeth]
+            .iter()
+            .map(|point| center + point.to_vec2() * radius)
+            .collect();
+        // Cog outlines are concave but star-shaped around their center. A fan
+        // fills them correctly; convex_polygon would cut across tooth valleys.
+        let mut mesh = egui::Mesh::default();
+        mesh.vertices.reserve(points.len() + 1);
+        mesh.indices.reserve(points.len() * 3);
+        mesh.colored_vertex(center, fill);
+        for point in &points {
+            mesh.colored_vertex(*point, fill);
+        }
+        for index in 0..points.len() as u32 {
+            mesh.add_triangle(0, index + 1, (index + 1) % points.len() as u32 + 1);
+        }
+        self.painter.add(Shape::mesh(mesh));
+        let stroke = Stroke::new(1.1 * self.transform.scaling, stroke_color);
+        self.painter.add(Shape::closed_line(points, stroke));
+        for hole in 0..5 {
+            let angle = f64::from(hole) * TAU / 5.0 - FRAC_PI_2;
+            let offset = egui::vec2(angle.cos() as f32, angle.sin() as f32) * radius * 0.49;
+            self.painter
+                .circle_filled(center + offset, radius * 0.105, self.palette.surface);
+        }
+        self.painter
+            .circle(center, radius * 0.2, self.palette.surface, stroke);
+    }
+}
+
+fn paint_drivetrain(
+    ui: &egui::Ui,
+    rect: Rect,
+    scale: f32,
+    cached: &CachedView,
+    hovered: Option<(GearKind, u16)>,
+) {
+    let layout = &cached.layout;
+    let colors = cached.key.palette;
+    let painter = VectorPainter {
+        painter: ui.painter().with_clip_rect(rect),
+        transform: egui::emath::TSTransform::new(rect.min.to_vec2(), scale),
+        palette: colors,
+        outlines: &layout.outlines,
+    };
+    painter.painter.rect_filled(rect, 0, colors.surface);
+    let (front, rear) = cached.key.selected;
+    let width = layout.width;
+    let header = Rect::from_min_size(rect.min, egui::vec2(rect.width(), 224.0 * scale));
+    if painter.painter.clip_rect().intersects(header) {
+        painter.text(
+            width / 2.0,
+            27.0,
+            18,
+            &format!("Selected gear: {front} / {rear} teeth"),
+            true,
+            colors.text,
+        );
+        painter.text(
+            width / 2.0,
+            48.0,
+            13,
+            &format!(
+                "Ratio {:.2} · front teeth ÷ rear teeth",
+                f64::from(front) / f64::from(rear)
+            ),
+            true,
+            colors.muted,
+        );
+        let largest = f32::from(front.max(rear));
+        let front_radius = 26.0 + 30.0 * (f32::from(front) / largest);
+        let rear_radius = 26.0 + 30.0 * (f32::from(rear) / largest);
+        let front_center = Pos2::new(width * 0.75, 113.0);
+        let rear_center = Pos2::new(width * 0.25, 113.0);
+        let chain: Vec<_> = chain_outline(
+            rear_center,
+            rear_radius + 3.0,
+            front_center,
+            front_radius + 3.0,
+        )
+        .into_iter()
+        .map(|point| painter.transform * point)
+        .collect();
+        painter.painter.add(Shape::line(
+            chain.clone(),
+            Stroke::new(5.0 * scale, colors.muted),
+        ));
+        painter.painter.extend(Shape::dashed_line(
+            &chain,
+            Stroke::new(1.8 * scale, colors.surface),
+            4.0 * scale,
+            4.0 * scale,
+        ));
+        painter.cog(front_center, front_radius, front, true);
+        painter.cog(rear_center, rear_radius, rear, true);
+        painter.text(
+            front_center.x,
+            188.0,
+            14,
+            &format!("Front · {front} teeth"),
+            true,
+            colors.text,
+        );
+        painter.text(
+            rear_center.x,
+            188.0,
+            14,
+            &format!("Rear · {rear} teeth"),
+            true,
+            colors.text,
+        );
+        painter.text(
+            width / 2.0,
+            212.0,
+            12,
+            "Schematic: exact tooth counts, sizes normalized for visibility.",
+            true,
+            colors.muted,
+        );
+    }
+    for inventory in &layout.inventories {
+        let title_rect =
+            painter.transform * Rect::from_min_size(inventory.origin, egui::vec2(width, 30.0));
+        if painter.painter.clip_rect().intersects(title_rect) {
+            painter.text(
+                inventory.origin.x + 16.0,
+                inventory.origin.y + 20.0,
+                16,
+                &inventory.title,
+                false,
+                colors.text,
+            );
+        }
+        for target in &inventory.targets {
+            let card = painter.transform * target.rect;
+            // Large custom cassettes may extend well below the viewport. Their
+            // invisible cogs need neither meshes nor text layout this frame.
+            if !painter.painter.clip_rect().intersects(card) {
+                continue;
+            }
+            let selected = target.teeth
+                == match target.kind {
+                    GearKind::Front => front,
+                    GearKind::Rear => rear,
+                };
+            let highlighted = selected || hovered == Some((target.kind, target.teeth));
+            painter.painter.rect(
+                card,
+                5,
+                colors.surface,
+                Stroke::new(
+                    if highlighted { 2.0 } else { 1.0 } * scale,
+                    if highlighted {
+                        colors.accent
+                    } else {
+                        colors.border
+                    },
+                ),
+                egui::StrokeKind::Inside,
+            );
+            painter.cog(target.center, target.radius, target.teeth, selected);
+            painter.text(
+                target.center.x,
+                target.rect.top() + 96.0,
+                14,
+                &format!("{} teeth", target.teeth),
+                true,
+                colors.text,
+            );
+        }
+    }
+}
+
+/// Sample the same circular roots and three tooth segments used by SVG export.
+/// Root arcs get enough samples even for the valid one- and two-tooth cases.
+fn cog_outline(teeth: u16) -> Vec<Pos2> {
+    if teeth == 0 {
+        return Vec::new();
+    }
+    let pitch = TAU / f64::from(teeth);
+    let root = 1.0 - 0.18_f64.min(pitch * 0.8);
+    let base_half = (pitch * 0.32).min(0.32);
+    let tip_half = (pitch * 0.18).min(0.18);
+    let point = |angle: f64, radius: f64| {
+        Pos2::new((angle.cos() * radius) as f32, (angle.sin() * radius) as f32)
+    };
+    let arc_steps = ((pitch / 2.0 - base_half) / 0.12).ceil().max(1.0) as usize;
+    let mut points = Vec::with_capacity(usize::from(teeth) * (arc_steps * 2 + 3));
+    for tooth in 0..teeth {
+        let angle = -FRAC_PI_2 + f64::from(tooth) * pitch;
+        for step in 0..arc_steps {
+            points.push(point(
+                angle - pitch / 2.0 + (pitch / 2.0 - base_half) * step as f64 / arc_steps as f64,
+                root,
+            ));
+        }
+        points.push(point(angle - base_half, root));
+        points.push(point(angle - tip_half, 1.0));
+        points.push(point(angle + tip_half, 1.0));
+        for step in 0..arc_steps {
+            points.push(point(
+                angle + base_half + (pitch / 2.0 - base_half) * step as f64 / arc_steps as f64,
+                root,
+            ));
+        }
+    }
+    points
+}
+
+fn chain_outline(left: Pos2, left_radius: f32, right: Pos2, right_radius: f32) -> Vec<Pos2> {
+    let normal_x = ((left_radius - right_radius) / (right.x - left.x)).clamp(-0.99, 0.99);
+    let normal_y = (1.0 - normal_x * normal_x).sqrt();
+    let angle = f64::from(normal_y).atan2(f64::from(normal_x));
+    let mut points = vec![left + egui::vec2(normal_x, -normal_y) * left_radius];
+    for (center, radius, start, sweep) in [
+        (right, right_radius, -angle, 2.0 * angle),
+        (left, left_radius, angle, TAU - 2.0 * angle),
+    ] {
+        let steps = (sweep / 0.1).ceil() as usize;
+        for step in 0..=steps {
+            let angle = start + sweep * step as f64 / steps as f64;
+            points.push(center + egui::vec2(angle.cos() as f32, angle.sin() as f32) * radius);
+        }
+    }
+    points
+}
+
 struct SvgWriter {
     body: String,
-    targets: Vec<GearTarget>,
     palette: Palette,
 }
 
@@ -259,39 +624,22 @@ impl SvgWriter {
         );
     }
 
-    fn inventory(
-        &mut self,
-        origin: Pos2,
-        width: f32,
-        teeth: &[u16],
-        kind: GearKind,
-        selected: u16,
-    ) -> f32 {
-        let title = match kind {
-            GearKind::Front => format!("Front chainrings ({})", teeth.len()),
-            GearKind::Rear => format!("Rear sprockets ({})", teeth.len()),
-        };
-        let top = origin.y;
+    fn inventory(&mut self, inventory: &InventoryLayout, selected: u16) {
         self.text(
-            origin.x + 16.0,
-            top + 20.0,
+            inventory.origin.x + 16.0,
+            inventory.origin.y + 20.0,
             16,
-            &title,
+            &inventory.title,
             false,
             self.palette.text,
         );
-        let columns = (((width - 24.0) / 96.0) as usize)
-            .clamp(1, 8)
-            .min(teeth.len());
-        let gap = 8.0;
-        let cell_width = ((width - 32.0 - gap * (columns - 1) as f32) / columns as f32).min(160.0);
-        let cell_height = 108.0;
-        let start_x =
-            origin.x + (width - (cell_width * columns as f32 + gap * (columns - 1) as f32)) / 2.0;
-        let max_teeth = f32::from(*teeth.iter().max().unwrap());
-        for (index, count) in teeth.iter().copied().enumerate() {
-            let x = start_x + (index % columns) as f32 * (cell_width + gap);
-            let y = top + 34.0 + (index / columns) as f32 * (cell_height + gap);
+        for (index, target) in inventory.targets.iter().enumerate() {
+            let kind = target.kind;
+            let count = target.teeth;
+            let x = target.rect.left();
+            let y = target.rect.top();
+            let cell_width = target.rect.width();
+            let cell_height = target.rect.height();
             let is_selected = count == selected;
             let border = if is_selected {
                 self.palette.accent
@@ -308,11 +656,9 @@ impl SvgWriter {
                 hex(self.palette.surface),
                 hex(border)
             );
-            let radius = 19.0 + 17.0 * (f32::from(count) / max_teeth).sqrt();
-            let center = Pos2::new(x + cell_width / 2.0, y + 43.0);
-            self.cog(center, radius, count, is_selected);
+            self.cog(target.center, target.radius, count, is_selected);
             self.text(
-                center.x,
+                target.center.x,
                 y + 96.0,
                 14,
                 &format!("{count} teeth"),
@@ -320,21 +666,15 @@ impl SvgWriter {
                 self.palette.text,
             );
             self.body.push_str("</g>");
-            self.targets.push(GearTarget {
-                rect: Rect::from_min_size(Pos2::new(x, y), egui::vec2(cell_width, cell_height)),
-                kind,
-                teeth: count,
-            });
         }
-        top + 34.0 + teeth.len().div_ceil(columns) as f32 * (cell_height + gap)
     }
 }
 
-fn build_svg(key: &ViewKey) -> SvgDrawing {
-    let width = key.width as f32;
+fn export_svg(key: &ViewKey, layout: &DrawingLayout) -> String {
+    let width = layout.width;
+    let height = layout.height;
     let mut writer = SvgWriter {
         body: String::new(),
-        targets: Vec::new(),
         palette: key.palette,
     };
     let (front, rear) = key.selected;
@@ -405,54 +745,20 @@ fn build_svg(key: &ViewKey) -> SvgDrawing {
         key.palette.muted,
     );
 
-    let inventory_top = 224.0;
-    let height = if width >= 700.0 {
-        let front_width = 230.0;
-        let front_x = width - front_width;
-        let front_bottom = writer.inventory(
-            Pos2::new(front_x, inventory_top),
-            front_width,
-            &key.fronts,
-            GearKind::Front,
-            front,
-        );
-        let rear_bottom = writer.inventory(
-            Pos2::new(0.0, inventory_top),
-            front_x - 12.0,
-            &key.rears,
-            GearKind::Rear,
-            rear,
-        );
-        front_bottom.max(rear_bottom) + 12.0
-    } else {
-        let next_y = writer.inventory(
-            Pos2::new(0.0, inventory_top),
-            width,
-            &key.fronts,
-            GearKind::Front,
-            front,
-        );
-        writer.inventory(
-            Pos2::new(0.0, next_y + 16.0),
-            width,
-            &key.rears,
-            GearKind::Rear,
-            rear,
-        ) + 12.0
-    };
-    let svg = format!(
+    for inventory in &layout.inventories {
+        let selected = match inventory.targets[0].kind {
+            GearKind::Front => front,
+            GearKind::Rear => rear,
+        };
+        writer.inventory(inventory, selected);
+    }
+    format!(
         "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"{width:.0}\" height=\"{height:.0}\" viewBox=\"0 0 {width:.0} {height:.0}\" role=\"img\" aria-labelledby=\"title description\"><title id=\"title\">Bicycle drivetrain: {} front chainrings and {} rear sprockets</title><desc id=\"description\">Selected front {front} teeth and rear {rear} teeth. All gear outlines contain their specified number of teeth. Gear sizes and chain routing are schematic, not manufacturing geometry.</desc><rect width=\"100%\" height=\"100%\" fill=\"{}\"/><g font-family=\"sans-serif\">{}</g></svg>",
         key.fronts.len(),
         key.rears.len(),
         hex(key.palette.surface),
         writer.body
-    );
-    SvgDrawing {
-        svg,
-        width,
-        height,
-        targets: writer.targets,
-    }
+    )
 }
 
 /// One continuous closed outline: two root-circle arcs and three straight
@@ -539,6 +845,27 @@ fn escape_xml(text: &str) -> String {
 mod tests {
     use super::*;
 
+    struct SvgDrawing {
+        svg: String,
+        width: f32,
+        height: f32,
+        targets: Vec<GearTarget>,
+    }
+
+    fn build_svg(key: &ViewKey) -> SvgDrawing {
+        let layout = DrawingLayout::new(key);
+        SvgDrawing {
+            svg: export_svg(key, &layout),
+            width: layout.width,
+            height: layout.height,
+            targets: layout
+                .inventories
+                .iter()
+                .flat_map(|inventory| inventory.targets.iter().copied())
+                .collect(),
+        }
+    }
+
     fn palette() -> Palette {
         Palette {
             background: Color32::from_gray(240),
@@ -575,6 +902,17 @@ mod tests {
             assert_eq!(path.matches('A').count(), usize::from(teeth) * 2);
             assert!(path.ends_with(" Z"));
             assert!(!path.contains("NaN") && !path.contains("inf"));
+            let outline = cog_outline(teeth);
+            assert!(outline.iter().all(|point| point.is_finite()));
+            // Every tooth has two distinct tip vertices at the outer radius;
+            // root-arc samples must stay below that radius, even at 200 teeth.
+            assert_eq!(
+                outline
+                    .iter()
+                    .filter(|point| (point.to_vec2().length() - 1.0).abs() < 0.000_01)
+                    .count(),
+                usize::from(teeth) * 2,
+            );
         }
         assert!(cog_path(Pos2::ZERO, 36.0, 0).is_empty());
     }
@@ -622,30 +960,52 @@ mod tests {
     }
 
     #[test]
-    fn cache_reuses_current_image_and_invalidates_on_selection_or_theme_change() {
-        let ctx = egui::Context::default();
+    fn selection_and_theme_reuse_geometry_and_only_export_generates_svg() {
         let mut view = DrivetrainView::default();
         assert!(view.svg().is_none());
         let original = key("50,34", "11,34", 800);
-        view.prepare(&ctx, original.clone());
-        let previous = view.cached.as_ref().unwrap().bytes.clone();
-        view.prepare(&ctx, original.clone());
-        assert!(Arc::ptr_eq(&previous, &view.cached.as_ref().unwrap().bytes));
+        view.prepare(original.clone());
+        let previous = view.cached.as_ref().unwrap().layout.clone();
+        assert!(view.cached.as_ref().unwrap().svg.get().is_none());
+        view.prepare(original.clone());
+        assert!(Arc::ptr_eq(
+            &previous,
+            &view.cached.as_ref().unwrap().layout
+        ));
+        assert!(
+            view.svg()
+                .unwrap()
+                .contains("Selected front 50 teeth and rear 11 teeth")
+        );
+        assert!(view.cached.as_ref().unwrap().svg.get().is_some());
         let mut changed = original;
         changed.selected = (34, 34);
-        view.prepare(&ctx, changed.clone());
-        assert!(!Arc::ptr_eq(
+        view.prepare(changed.clone());
+        assert!(Arc::ptr_eq(
             &previous,
-            &view.cached.as_ref().unwrap().bytes
+            &view.cached.as_ref().unwrap().layout
         ));
+        assert!(view.cached.as_ref().unwrap().svg.get().is_none());
         assert!(
             view.svg()
                 .unwrap()
                 .contains("Selected front 34 teeth and rear 34 teeth")
         );
         changed.palette.surface = Color32::BLACK;
-        view.prepare(&ctx, changed);
+        view.prepare(changed.clone());
+        assert!(Arc::ptr_eq(
+            &previous,
+            &view.cached.as_ref().unwrap().layout
+        ));
+        assert!(view.cached.as_ref().unwrap().svg.get().is_none());
         assert!(view.svg().unwrap().contains("fill=\"#000000\""));
+        changed.width = 400;
+        view.prepare(changed);
+        assert!(!Arc::ptr_eq(
+            &previous,
+            &view.cached.as_ref().unwrap().layout
+        ));
+        assert!(view.cached.as_ref().unwrap().svg.get().is_none());
     }
 
     #[test]
@@ -714,9 +1074,8 @@ mod tests {
             .drop_without_applying_deltas();
         };
         render(&mut view, &mut selected, Vec::new());
-        let point = view.cached.as_ref().unwrap().drawing.targets[0]
-            .rect
-            .center();
+        let original_layout = view.cached.as_ref().unwrap().layout.clone();
+        let point = original_layout.inventories[0].targets[0].rect.center();
         for pressed in [true, false] {
             render(
                 &mut view,
@@ -733,10 +1092,115 @@ mod tests {
             );
         }
         assert_eq!(selected, Some((50, 34)));
+        assert!(Arc::ptr_eq(
+            &original_layout,
+            &view.cached.as_ref().unwrap().layout
+        ));
+        assert!(view.cached.as_ref().unwrap().svg.get().is_none());
         assert!(
             view.svg()
                 .unwrap()
                 .contains("Selected front 50 teeth and rear 34 teeth")
         );
+    }
+
+    #[test]
+    fn native_view_does_not_create_image_textures_when_selection_changes() {
+        let ctx = egui::Context::default();
+        let setup = GearSetup::parse("200,100,1", "137-200", 2_100.0).unwrap();
+        let mut view = DrivetrainView::default();
+        let mut original_layout = None;
+        for rear in 137..=200 {
+            let mut selected = Some((200, rear));
+            let mut output = ctx.run_ui(
+                egui::RawInput {
+                    screen_rect: Some(Rect::from_min_size(Pos2::ZERO, egui::vec2(840.0, 700.0))),
+                    ..Default::default()
+                },
+                |ui| view.show(ui, &setup, &mut selected),
+            );
+            let primitives =
+                ctx.tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point);
+            assert!(!primitives.is_empty());
+            assert!(
+                output
+                    .textures_delta
+                    .set
+                    .iter()
+                    .all(|(id, _)| *id == egui::TextureId::Managed(0)),
+                "Only egui's shared font atlas may be uploaded"
+            );
+            let cached = view.cached.as_ref().unwrap();
+            assert!(cached.svg.get().is_none());
+            if let Some(previous) = &original_layout {
+                assert!(Arc::ptr_eq(previous, &cached.layout));
+            } else {
+                original_layout = Some(cached.layout.clone());
+            }
+            output.drop_without_applying_deltas();
+        }
+    }
+
+    /// Run manually with `cargo test --release --locked drivetrain_selection_timing
+    /// -- --ignored --nocapture`. Timings are diagnostic, never CI thresholds.
+    #[test]
+    #[ignore = "manual comparison of native frames with the previous SVG rasterization path"]
+    fn drivetrain_selection_timing() {
+        use std::hint::black_box;
+        use std::time::Instant;
+
+        for (label, fronts, rears) in [
+            ("normal 2x11", "50,34", "11,12,13,14,16,18,20,22,25,28,32"),
+            ("maximum 3x64", "200,100,1", "137-200"),
+        ] {
+            let setup = GearSetup::parse(fronts, rears, 2_100.0).unwrap();
+            let mut original = key(fronts, rears, 840);
+            let layout = DrawingLayout::new(&original);
+            let mut old_times = Vec::new();
+            for index in 0..3 {
+                original.selected.1 = setup.sprockets[index % setup.sprockets.len()];
+                let start = Instant::now();
+                let svg = export_svg(&original, &layout);
+                let image = egui_extras::image::load_svg_bytes(svg.as_bytes(), &Default::default())
+                    .unwrap();
+                black_box(image);
+                old_times.push(start.elapsed().as_secs_f64() * 1_000.0);
+            }
+            let ctx = egui::Context::default();
+            let mut view = DrivetrainView::default();
+            let mut native_times = Vec::new();
+            for index in 0..125 {
+                let mut selected = Some((
+                    setup.chainrings[0],
+                    setup.sprockets[index % setup.sprockets.len()],
+                ));
+                let start = Instant::now();
+                let mut output = ctx.run_ui(
+                    egui::RawInput {
+                        screen_rect: Some(Rect::from_min_size(
+                            Pos2::ZERO,
+                            egui::vec2(840.0, 700.0),
+                        )),
+                        ..Default::default()
+                    },
+                    |ui| view.show(ui, &setup, &mut selected),
+                );
+                black_box(
+                    ctx.tessellate(std::mem::take(&mut output.shapes), output.pixels_per_point),
+                );
+                output.drop_without_applying_deltas();
+                if index >= 5 {
+                    native_times.push(start.elapsed().as_secs_f64() * 1_000.0);
+                }
+            }
+            native_times.sort_by(f64::total_cmp);
+            let old_mean = old_times.iter().sum::<f64>() / old_times.len() as f64;
+            let native_mean = native_times.iter().sum::<f64>() / native_times.len() as f64;
+            println!(
+                "{label}: SVG generation+raster mean {old_mean:.3} ms (3 samples); native frame+tessellation mean {native_mean:.3} ms, p95 {:.3} ms (120 warm samples); ratio {:.1}x",
+                native_times[113],
+                old_mean / native_mean
+            );
+        }
     }
 }

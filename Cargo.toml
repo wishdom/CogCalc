@@ -1,0 +1,23 @@
+[package]
+name = "cogcalc"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+description = "A native bicycle gearing and cadence explorer"
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
+egui_extras = { version = "0.36.2", default-features = false, features = ["svg_text"] }
+rfd = "0.17.2"
+serde = { version = "1", features = ["derive"] }
+
+[features]
+screenshot = ["eframe/__screenshot"]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+strip = true
+

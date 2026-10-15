@@ -1,0 +1,26 @@
+name: Feature request
+description: Propose a specific improvement to CogCalc.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues before filing a request. For early ideas or questions, start a [Discussion](https://github.com/wishdom/CogCalc/discussions).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      description: Describe your use case and what is difficult or missing today.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed improvement
+      description: Describe the behavior you would like to see.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and additional context
+      description: Include any workarounds, alternative approaches, examples, or sketches that help explain the request.

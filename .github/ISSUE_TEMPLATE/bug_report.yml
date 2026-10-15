@@ -1,0 +1,54 @@
+name: Bug report
+description: Report a reproducible problem with CogCalc.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Search existing issues before filing a report. For usage help, use [Discussions](https://github.com/wishdom/CogCalc/discussions).
+        Report security vulnerabilities [privately](https://github.com/wishdom/CogCalc/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: CogCalc version or commit
+      description: Include how you obtained or built the app.
+      placeholder: "For example: version 0.1.0, built from commit abc1234"
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Operating system and environment
+      description: Include the OS version. For Linux display issues, include the desktop environment and Wayland or X11 if known.
+      placeholder: "For example: Windows 11, macOS 15, or Ubuntu 24.04 / GNOME / Wayland"
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the exact gearing, wheel size, cadence, and units when relevant.
+      placeholder: |
+        1. Open CogCalc and enter ...
+        2. Select ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should happen? For calculation errors, include the expected value and how you calculated it.
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: Describe what happened and include any relevant error message.
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Add screenshots, relevant logs, or a workaround. Remove personal information from attachments.

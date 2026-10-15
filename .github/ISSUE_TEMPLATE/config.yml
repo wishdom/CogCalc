@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and early ideas
+    url: https://github.com/wishdom/CogCalc/discussions
+    about: Ask for help, share setups, or discuss ideas with the community.
+  - name: Report a security vulnerability
+    url: https://github.com/wishdom/CogCalc/security/advisories/new
+    about: Report suspected vulnerabilities privately.

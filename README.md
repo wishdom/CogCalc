@@ -146,6 +146,12 @@ Tests cover known gearing values, the original 9–60 sprocket calculations, whe
 
 The previous Python source and bundled executable remain available in Git history. This version builds and runs from the Rust sources alone.
 
+## Community and contributions
+
+Ask questions, share bike setups, and discuss ideas in [Discussions](https://github.com/wishdom/CogCalc/discussions). Use [issues](https://github.com/wishdom/CogCalc/issues/new/choose) for bug reports and concrete feature requests.
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for development and pull request guidance. Report suspected vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+
 ## License
 
 [GNU General Public License v3.0](LICENSE), retained from the original project.

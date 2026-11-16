@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 eframe = { version = "0.36.2", default-features = false, features = ["accesskit", "default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui_extras = { version = "0.36.2", default-features = false }
-rfd = "0.17.2"
+rfd = "0.18.0"
 serde = { version = "1", features = ["derive"] }
 
 [dev-dependencies]
